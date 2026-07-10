@@ -5,8 +5,8 @@ import time
 from flask import Flask
 import threading
 
-BOT_TOKEN = "ضع_توكن_تيلغرام_هنا"
-GROQ_KEY = "ضع_مفتاح_Groq_هنا"
+BOT_TOKEN = "8987275709:AAELhNKyLHHgZFnc5srwKaaiYfngx2HGreI"
+GROQ_KEY = "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"
 
 client = Groq(api_key=GROQ_KEY)
 MODEL_NAME = "llama-3.3-70b-versatile"
