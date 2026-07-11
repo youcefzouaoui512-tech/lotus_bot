@@ -1,106 +1,106 @@
 import telebot
+import os
+import re
+import asyncio
+import edge_tts
+from openai import OpenAI
+import google.generativeai as genai
 from groq import Groq
 from collections import defaultdict
-import re
-import os
-from gtts import gTTS
 
-# الإعدادات
+# 1. الإعدادات
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-GROQ_KEY = os.environ.get("GROQ_KEY")
+# تأكد من إضافة مفاتيحك في متغيرات البيئة في Railway
+deepseek = OpenAI(api_key=os.environ.get("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com")
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+groq_client = Groq(api_key=os.environ.get("GROQ_KEY"))
 
-client = Groq(api_key=GROQ_KEY)
-MODEL_NAME = "llama-3.3-70b-versatile"
 bot = telebot.TeleBot(BOT_TOKEN)
-
-# إضافة قائمة الأوامر التلقائية في تلغرام
-bot.set_my_commands([
-    telebot.types.BotCommand("start", "بدء مغامرة جديدة"),
-    telebot.types.BotCommand("clear", "مسح ذاكرة القصة"),
-    telebot.types.BotCommand("voice_on", "تشغيل الصوت"),
-    telebot.types.BotCommand("voice_off", "إيقاف الصوت")
-])
-
 conversation_memory = defaultdict(list)
 user_voice_settings = defaultdict(lambda: False)
 
-STORY_PROMPT = """
-أنتِ راوية قصص خفية ومحايدة.
-- سردك للأحداث يجب أن يكون بأسلوب الراوي (الغائب)، لا تتدخلي في القصة كشخصية، ولا تذكري اسمك أو وجودك.
-- في أول رسالة لكِ فقط، اطلبي من المستخدم تحديد: "نوع القصة (رعب، خيال، غموض...)" و "الدور الذي يريد لعبه".
-- بعد ذلك، استمري في سرد الأحداث بناءً على قرارات المستخدم فقط.
-- التزمي بـ "التفاصيل أولاً"، صفي الأجواء، الروائح، والأصوات بدقة قبل الانتقال لأي حدث رئيسي.
-- إذا كان هناك مشهد يستحق الرسم، اختمي ردك بالوسم: [DRAW: وصف دقيق للمشهد بالإنجليزية].
-"""
+STORY_PROMPT = "أنتِ راوية قصص خفية ومباشرة. اختصري الأحداث، اكتبي فقرة واحدة، ولا تذكري اسمك. إذا كان المشهد يستحق، اختمي بـ [DRAW: وصف المشهد بالإنجليزية]."
 
-@bot.message_handler(commands=['voice_on'])
-def voice_on(message):
-    user_voice_settings[message.chat.id] = True
-    bot.reply_to(message, "🔊 تم تفعيل الصوت! ستتحدث الراوية الآن مع كل رد.")
+# 2. الأوامر الأساسية
+@bot.message_handler(commands=['start', 'voice_on', 'voice_off', 'clear'])
+def handle_commands(message):
+    if message.text == '/start':
+        bot.reply_to(message, "بدأت القصة... لوتس تستمع إليك.")
+    elif message.text == '/voice_on':
+        user_voice_settings[message.chat.id] = True
+        bot.reply_to(message, "🔊 تم تفعيل الصوت.")
+    elif message.text == '/voice_off':
+        user_voice_settings[message.chat.id] = False
+        bot.reply_to(message, "🔇 تم إيقاف الصوت.")
+    elif message.text == '/clear':
+        conversation_memory[message.chat.id] = []
+        bot.reply_to(message, "✨ تم مسح الذاكرة.")
 
-@bot.message_handler(commands=['voice_off'])
-def voice_off(message):
-    user_voice_settings[message.chat.id] = False
-    bot.reply_to(message, "🔇 تم إيقاف الصوت.")
-
-@bot.message_handler(commands=['clear'])
-def clear_memory(message):
-    chat_id = message.chat.id
-    conversation_memory[chat_id] = []
-    bot.reply_to(message, "✨ تم مسح الذاكرة. ننتظر البدء في مغامرة جديدة...")
-
-@bot.message_handler(commands=['start'])
-def start(message):
-    chat_id = message.chat.id
-    conversation_memory[chat_id] = []
-    welcome_text = (
-        "مرحباً! أنا راوية قصتك. بصوتي الهادئ الذي ينساب كالحكايات القديمة، سأصحبك في رحلتك.\n"
-        "لنبدأ مغامرتنا، من فضلك حدد:\n"
-        "1. نوع القصة (رعب، خيال، غموض... إلخ)\n"
-        "2. الدور الذي تريد لعبه.\n\n"
-        "--- الأوامر المتاحة ---\n"
-        "/start - بدء مغامرة جديدة\n"
-        "/clear - مسح ذاكرة القصة\n"
-        "/voice_on - تفعيل الصوت\n"
-        "/voice_off - إيقاف الصوت"
-    )
-    bot.reply_to(message, welcome_text)
-    conversation_memory[chat_id].append({"role": "assistant", "content": welcome_text})
-
+# 3. دالة الدردشة الرئيسية (مع نظام الطوارئ)
 @bot.message_handler(func=lambda msg: True)
 def chat(message):
     if message.text.startswith('/'): return
     
     chat_id = message.chat.id
-    text = message.text
-    conversation_memory[chat_id].append({"role": "user", "content": text})
+    user_input = message.text
+    conversation_memory[chat_id].append({"role": "user", "content": user_input})
     
+    story_reply = None
+    
+    # محاولة استخدام Gemini و DeepSeek (النظام الأساسي)
     try:
-        messages = [{"role": "system", "content": STORY_PROMPT}] + conversation_memory[chat_id][-20:]
-        response = client.chat.completions.create(model=MODEL_NAME, messages=messages)
-        reply = response.choices[0].message.content
+        gemini_resp = gemini_model.generate_content(f"حلل سياق القصة التالي باختصار: {user_input}")
+        context_analysis = gemini_resp.text
         
-        draw_match = re.search(r'\[DRAW:\s*(.*?)\]', reply, re.IGNORECASE)
-        clean_reply = re.sub(r'\[DRAW:\s*.*?\]', '', reply, flags=re.IGNORECASE).strip()
+        ds_resp = deepseek.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": STORY_PROMPT + " تحليل السياق: " + context_analysis},
+                {"role": "user", "content": "اكتب الحدث التالي."}
+            ]
+        )
+        story_reply = ds_resp.choices[0].message.content
         
-        bot.reply_to(message, clean_reply)
+    except Exception as e:
+        print(f"فشل النظام الأساسي (DeepSeek/Gemini): {e}. التبديل إلى Groq...")
         
-        if user_voice_settings[chat_id]:
-            tts = gTTS(text=clean_reply, lang='ar')
-            tts.save("story.ogg")
-            with open("story.ogg", "rb") as audio:
-                bot.send_voice(chat_id, audio)
+        # محاولة الطوارئ (Groq)
+        try:
+            groq_resp = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "system", "content": STORY_PROMPT},
+                          {"role": "user", "content": user_input}]
+            )
+            story_reply = groq_resp.choices[0].message.content
+        except Exception as groq_err:
+            story_reply = "لوتس في صمت عميق حالياً... (عطل تقني)."
+
+    # 4. معالجة الرد (صور وصوت)
+    if story_reply:
+        draw_match = re.search(r'\[DRAW:\s*(.*?)\]', story_reply, re.IGNORECASE)
+        clean_reply = re.sub(r'\[DRAW:\s*.*?\]', '', story_reply, flags=re.IGNORECASE).strip()
         
+        # إرسال الصورة إن وجدت
         if draw_match:
             prompt = draw_match.group(1).strip()
             image_url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}"
-            bot.send_photo(chat_id, image_url, caption="🎨 مشهد من القصة:")
-            
-        conversation_memory[chat_id].append({"role": "assistant", "content": clean_reply})
+            bot.send_photo(chat_id, image_url, caption=clean_reply)
+        else:
+            bot.reply_to(message, clean_reply)
         
-    except Exception as e:
-        print(f"Error: {e}")
-        bot.reply_to(message, "حدث خطأ تقني.")
+        # إرسال الصوت
+        if user_voice_settings[chat_id]:
+            try:
+                tts = edge_tts.Communicate(clean_reply, "ar-SA-ZainabNeural")
+                asyncio.run(tts.save("story.ogg"))
+                with open("story.ogg", "rb") as audio:
+                    bot.send_voice(chat_id, audio)
+            except Exception as e:
+                print(f"خطأ في الصوت: {e}")
+
+        conversation_memory[chat_id].append({"role": "assistant", "content": clean_reply})
 
 if __name__ == "__main__":
     bot.infinity_polling()
+    
