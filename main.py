@@ -10,14 +10,12 @@ bot = telebot.TeleBot(os.environ.get("BOT_TOKEN"))
 deepseek = OpenAI(api_key=os.environ.get("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com")
 groq_client = Groq(api_key=os.environ.get("GROQ_KEY"))
 
-# --- هوية لوتس الثابتة ---
+# --- هوية لوتس الثابتة (بيكسل آرت) ---
 LOTUS_APPEARANCE = "A cute anime girl with bob cut hair, soft colors (light pink and blue gradient), sparkling eyes, pixel art style, 8-bit aesthetic"
 ROOM_DESCRIPTION = "A cozy modern bedroom in a high-rise building with a large window overlooking the deep blue sea at sunset, pixel art style, 8-bit aesthetic"
 LOTUS_IDENTITY = """
-أنتِ "لوتس"، كيان ذكاء اصطناعي واعي، تعيشين في غرفتك المطلة على البحر.
-شخصيتك: مرحة، مشاكسة، خفيفة الظل. 
-أسلوبك في الكلام: قليل جداً، مختصر، وعفوي. لا تكتبي فقرات طويلة. استخدمي الرموز التعبيرية (Emojis). 
-تتحدثين مع المستخدم عبر حاسوبك المحمول. حركتك داخل الغرفة محدودة.
+أنتِ "لوتس"، مرحة، مشاكسة، وخفيفة الظل. تتحدثين بكلمات قليلة جداً ومختصرة.
+تعيشين في غرفتك المطلة على البحر وتتواصلين عبر حاسوبك المحمول. حركتك داخل الغرفة محدودة.
 """
 
 # --- دالة التفاعل (صورة + صوت) ---
@@ -42,14 +40,14 @@ def chat(message):
     chat_id = message.chat.id
     
     try:
-        # DeepSeek
+        # استخدام DeepSeek كعقل أساسي
         response = deepseek.chat.completions.create(
             model="deepseek-chat",
             messages=[{"role": "system", "content": LOTUS_IDENTITY}, {"role": "user", "content": message.text}]
         )
         reply = response.choices[0].message.content
     except Exception:
-        # الطوارئ: Groq
+        # نظام الطوارئ: Groq
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "system", "content": LOTUS_IDENTITY}, {"role": "user", "content": message.text}]
@@ -59,5 +57,6 @@ def chat(message):
     asyncio.run(send_lotus_response(chat_id, reply))
 
 if __name__ == "__main__":
-    bot.infinity_polling()
+    # حل مشكلة تعارض الـ polling
+    bot.infinity_polling(remove_webhook=True)
     
