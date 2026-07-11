@@ -6,6 +6,7 @@ from openai import OpenAI
 from groq import Groq
 
 # --- الإعدادات ---
+# تأكد من إضافة المتغيرات BOT_TOKEN, DEEPSEEK_API_KEY, GROQ_KEY في Railway
 bot = telebot.TeleBot(os.environ.get("BOT_TOKEN"))
 deepseek = OpenAI(api_key=os.environ.get("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com")
 groq_client = Groq(api_key=os.environ.get("GROQ_KEY"))
@@ -18,8 +19,9 @@ LOTUS_IDENTITY = """
 تعيشين في غرفتك المطلة على البحر وتتواصلين عبر حاسوبك المحمول. حركتك داخل الغرفة محدودة.
 """
 
-# --- دالة التفاعل ---
+# --- دالة التفاعل (صورة + صوت) ---
 async def send_lotus_response(chat_id, text, emotion="happy"):
+    # توليد الصورة بالبيكسل آرت
     image_prompt = f"{ROOM_DESCRIPTION}, {LOTUS_APPEARANCE}, Lotus looks {emotion}, high quality pixel art, 8-bit"
     image_url = f"https://image.pollinations.ai/prompt/{image_prompt.replace(' ', '%20')}"
     
@@ -54,8 +56,7 @@ def chat(message):
     asyncio.run(send_lotus_response(chat_id, reply))
 
 if __name__ == "__main__":
-    # تنظيف الاتصال القديم قبل البدء
+    # حل جذري لمشكلة تعارض الاتصال
     bot.delete_webhook()
-    # بدء البولينج
+    print("Lotus is now online and waiting for messages...")
     bot.infinity_polling()
-    
