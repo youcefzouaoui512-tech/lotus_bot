@@ -1,5 +1,5 @@
 pyTelegramBotAPI
 groq
 openai
-google-generativeai
 edge-tts
+aiofiles
