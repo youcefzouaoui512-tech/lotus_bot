@@ -4,20 +4,20 @@ import asyncio
 import edge_tts
 from groq import Groq
 
-# الإعدادات
+# إعدادات البوت
 bot = telebot.TeleBot(os.environ.get("BOT_TOKEN"))
 client = Groq(api_key=os.environ.get("GROQ_KEY"))
 
-# هوية لوتس الثابتة (بيكسل آرت)
+# هوية لوتس
 LOTUS_IDENTITY = """
-أنتِ "لوتس"، مرحة، مشاكسة، خفيفة الظل، وتتحدثين بكلمات قليلة جداً ومختصرة.
-تعيشين في غرفتك المطلة على البحر. استخدمي الرموز التعبيرية (Emojis) في كلامك.
+أنتِ "لوتس"، مرحة، مشاكسة، خفيفة الظل. تتحدثين بكلمات قليلة جداً ومختصرة.
+تعيشين في غرفتك المطلة على البحر. استخدمي Emojis في كلامك.
 """
 
-# دالة ذكية لاختيار نموذج Groq (أقسام)
+# دالة ذكية للرد عبر Groq
 def get_groq_response(user_text):
-    # نستخدم نماذج مختلفة حسب طول الرسالة
-    model = "llama-3.3-70b-versatile" if len(user_text) > 30 else "llama-3.3-8b-instant"
+    # استخدام نماذج مستقرة ومتاحة دائماً
+    model = "llama-3.1-70b-versatile" if len(user_text) > 30 else "llama-3.1-8b-instant"
     
     response = client.chat.completions.create(
         model=model,
@@ -27,8 +27,8 @@ def get_groq_response(user_text):
 
 # دالة إرسال الصورة والصوت
 async def send_lotus_response(chat_id, text):
-    # توليد الصورة بأسلوب ثابت
-    image_prompt = "A cute anime girl with bob cut hair, pixel art style, 8-bit aesthetic, in a cozy room overlooking the sea, high quality"
+    # توليد الصورة
+    image_prompt = "A cute anime girl with bob cut hair, pixel art style, in a cozy room overlooking the sea"
     image_url = f"https://image.pollinations.ai/prompt/{image_prompt.replace(' ', '%20')}"
     
     # توليد الصوت
@@ -50,7 +50,7 @@ def chat(message):
         print(f"Error: {e}")
 
 if __name__ == "__main__":
-    # تنظيف الاتصال لضمان عدم وجود تضارب (Conflict 409)
+    # تنظيف الاتصال قبل البدء
     bot.delete_webhook()
     print("Lotus is online!")
     bot.infinity_polling()
