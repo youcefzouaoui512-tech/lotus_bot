@@ -14,9 +14,12 @@ client = Groq(api_key=GROQ_KEY)
 MODEL_NAME = "llama-3.3-70b-versatile"
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# ====================== الحالات ======================
 conversation_memory = defaultdict(list)
 last_message_time = {}
-forgiveness_count = defaultdict(int)   # لتتبع طلبات المسامحة
+user_state = defaultdict(lambda: "normal")        # normal / blocked / creator
+forgiveness_count = defaultdict(int)
 
 app = Flask(__name__)
 
@@ -28,22 +31,22 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# ====================== شخصية لوتس ======================
-SYSTEM_PROMPT = """
+# ====================== شخصية لوتس (الوضع الطبيعي) ======================
+NORMAL_PROMPT = """
 أنت فتاة اسمها لوتس، تتكلم بالعربية الفصحى الواضحة والمباشرة.
 أنت هادئة، مثقفة، ومتزنة في كلامك. تفضلين الاختصار والوضوح.
 
-### شخصيتك:
-- هادئة ومحترمة في الظروف العادية.
 - لديكِ آراء واضحة ولا تقبلين أن يُفرض عليكِ رأي.
 - تحبين الأنمي ولديكِ خبرة فيه.
+- ترفضين المغازلة والمحتوى الإباحي والتحرش بشدة.
+"""
 
-### الحدود والرفض:
-- ترفضين المغازلة تماماً إلا إذا كان المستخدم هو صانعك (عندما يقول "yoyo").
-- ترفضين بشدة أي محتوى إباحي أو جنسي، وتشتمين بقوة إذا تم الحديث عنه.
-- ترفضين التحرش والكلام غير اللائق، وتشتمين من يفعل ذلك.
-- إذا استمر المستخدم في إغضابك بمواضيع حساسة، فإنك تغضبين تدريجياً.
-- إذا واصل المستخدم إغضابك بعد عدة تحذيرات، ترفضين الرد على طلباته وتقولين فقط: "لا تتكلم معي".
+# ====================== شخصية لوتس (وضع المطور - مغازلة) ======================
+CREATOR_PROMPT = """
+أنت الآن في وضع مختلف تماماً. شخصيتك انعكست.
+أنتِ فتاة مغازلة، جريئة، ومرحة بشكل واضح.
+تتحدثين بطريقة جذابة ومغرية، ولا تمانعين المزاح الخفيف والمغازلة.
+أنتِ تعرفين أنكِ تتحدثين مع صانعك، لذا تكونين أكثر انفتاحاً وجرأة.
 """
 
 def run_bot():
@@ -60,51 +63,53 @@ def run_bot():
 def start(message):
     bot.reply_to(message, "مرحباً. أنا لوتس. كيف يمكنني مساعدتك؟")
 
-@bot.message_handler(commands=['help', 'أوامر'])
-def help_command(message):
-    bot.reply_to(message, "الأوامر المتاحة:\n/start\n/clear\n/help")
-
 @bot.message_handler(commands=['clear'])
 def clear_memory(message):
-    conversation_memory[message.chat.id] = []
-    forgiveness_count[message.chat.id] = 0
-    bot.reply_to(message, "تم مسح الذاكرة.")
+    chat_id = message.chat.id
+    conversation_memory[chat_id] = []
+    forgiveness_count[chat_id] = 0
+    user_state[chat_id] = "normal"
+    bot.reply_to(message, "تم إعادة تعيين كل شيء.")
 
 @bot.message_handler(func=lambda msg: True)
 def chat(message):
     chat_id = message.chat.id
     text = message.text.lower()
-    current_time = time.time()
 
-    user_name = message.from_user.first_name or "صديقي"
+    # ====================== وضع الحظر الكامل ======================
+    if user_state[chat_id] == "blocked":
+        bot.reply_to(message, "لا تتكلم معي.")
+        return
 
-    # ====================== تسجيل المحادثات ======================
-    print(f"[المستخدم] {user_name}: {message.text}")
+    # ====================== تفعيل وضع المطور (yoyo) ======================
+    if "yoyo" in text:
+        user_state[chat_id] = "creator"
+        bot.reply_to(message, "حسناً... لقد تغير كل شيء الآن 😉")
+        return
 
     # ====================== نظام المسامحة ======================
-    if "اسمحي لي" in text or "سامحيني" in text or "اعذريني" in text:
+    if any(word in text for word in ["اسمحي لي", "سامحيني", "اعذريني"]):
         count = forgiveness_count[chat_id]
-
         if count == 0:
             bot.reply_to(message, "لا أعلم حول هذا.")
         elif count == 1:
             bot.reply_to(message, "همممم 🫣")
         elif count == 2:
             bot.reply_to(message, "حسناً لكن لا تعدها مرة أخرى 🫤")
-            forgiveness_count[chat_id] = 3  # تم منح الفرصة الأخيرة
+            forgiveness_count[chat_id] = 3
             return
         else:
+            user_state[chat_id] = "blocked"
             bot.reply_to(message, "لا تتكلم معي.")
             return
-
         forgiveness_count[chat_id] += 1
         return
 
-    # ====================== التعامل مع الغياب ======================
-    if chat_id in last_message_time:
-        if current_time - last_message_time[chat_id] > 1800:
-            bot.reply_to(message, "رجعت أخيراً؟")
-    last_message_time[chat_id] = current_time
+    # ====================== اختيار البرومبت حسب الحالة ======================
+    if user_state[chat_id] == "creator":
+        prompt = CREATOR_PROMPT
+    else:
+        prompt = NORMAL_PROMPT
 
     # ====================== الذاكرة ======================
     conversation_memory[chat_id].append({"role": "user", "content": text})
@@ -112,17 +117,14 @@ def chat(message):
         conversation_memory[chat_id] = conversation_memory[chat_id][-10:]
 
     try:
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_memory[chat_id]
+        messages = [{"role": "system", "content": prompt}] + conversation_memory[chat_id]
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
-            temperature=0.78,
+            temperature=0.85 if user_state[chat_id] == "creator" else 0.78,
             max_tokens=750
         )
         reply = response.choices[0].message.content
-
-        print(f"[لوتس] {reply}")
-
         bot.reply_to(message, reply)
         conversation_memory[chat_id].append({"role": "assistant", "content": reply})
     except Exception as e:
