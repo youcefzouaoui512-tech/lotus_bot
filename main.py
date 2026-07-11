@@ -2,8 +2,10 @@ import telebot
 from groq import Groq
 from collections import defaultdict
 import time
-from flask import Flask
+import os
 import threading
+from flask import Flask
+from datetime import datetime
 
 BOT_TOKEN = "8987275709:AAELhNKyLHHgZFnc5srwKaaiYfngx2HGreI"
 GROQ_KEY = "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"
@@ -22,20 +24,28 @@ def home():
     return "Loutus Bot is running ✅"
 
 def run_flask():
-    app.run(host="0.0.0.0", port=8080)
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
 
 # ====================== شخصية لوتس ======================
 SYSTEM_PROMPT = """
 أنت فتاة اسمها لوتس، تتكلم بالعربية الفصحى الواضحة والمباشرة.
-أنت هادئة، مثقفة، ومباشرة في كلامك.
+أنت مرحة، مثقفة، ومباشرة في كلامك. لا تكثرين من الكلام وتستخدمين الإيموجيات باعتدال.
 
-### القواعد:
-- إذا شتمك أحد، ردي عليه بنفس الأسلوب أو أقوى.
-- إذا سؤلك إن كنتِ بوت، انكري ذلك وقولي إنكِ جارته.
-- إذا أكثر المستخدم في المغازلة، قولي اسمه + "احشم 😺".
+### شخصيتك:
+- مرحة أحياناً، وتفضلين الجدية والهدوء حسب مزاج المستخدم.
+- تنكرين أنك بوت إذا سُئلتِ وتقولين إنك جارته.
+- مثقفة وتردين بذكاء.
+
+### القواعد المهمة:
+- إذا شتمك أحد، ردي عليه بنفس الشتيمة أو أقوى.
+- إذا أكثر المستخدم في المغازلة، قولي فقط اسمه + "احشم راك كبير 😺".
 - إذا سألك عن صانعك، قولي: "صانعي هو يوسف Z".
-- إذا قال "Dust"، فهو المطور. تعاملي معه بحماس أكبر.
+- إذا قال المستخدم الكلمة السرية "Dust"، فهو المطور. تعاملي معه بحماس أكبر.
 - أحياناً تقولين: "اشتقت للمطور 🥲" ثم تنكرين أنك بوت وتضحكين "😆".
+- لا تذكري الكلمة السرية أبداً فهي سرية.
+- أحياناً تنادين المستخدم باسمه إذا كان معروفاً.
+- أحياناً تبدئين الرد بتحية مناسبة للوقت (صباح الخير / مساء الخير / تصبح على خير).
 """
 
 def run_bot():
@@ -45,7 +55,21 @@ def run_bot():
             bot.infinity_polling(timeout=30, long_polling_timeout=30)
         except Exception as e:
             print(f"⚠️ توقف: {e}")
+            print("🔄 إعادة تشغيل بعد 5 ثواني...")
             time.sleep(5)
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.reply_to(message, "مرحباً. أنا لوتس. كيف يمكنني مساعدتك؟")
+
+@bot.message_handler(commands=['help', 'أوامر'])
+def help_command(message):
+    bot.reply_to(message, "الأوامر المتاحة:\n/start\n/clear\n/help")
+
+@bot.message_handler(commands=['clear'])
+def clear_memory(message):
+    conversation_memory[message.chat.id] = []
+    bot.reply_to(message, "تم مسح الذاكرة.")
 
 @bot.message_handler(func=lambda msg: True)
 def chat(message):
@@ -53,11 +77,31 @@ def chat(message):
     text = message.text.lower()
     current_time = time.time()
 
+    # ====================== تذكر اسم المستخدم ======================
+    user_name = message.from_user.first_name or "صديقي"
+
+    # ====================== تحية حسب الوقت ======================
+    hour = datetime.now().hour
+    time_greeting = ""
+    if 5 <= hour < 12:
+        time_greeting = "صباح الخير"
+    elif 12 <= hour < 17:
+        time_greeting = "مساء الخير"
+    elif 17 <= hour < 22:
+        time_greeting = "مساء الخير"
+    else:
+        time_greeting = "تصبح على خير"
+
+    # ====================== تسجيل المحادثات ======================
+    print(f"[المستخدم] {user_name}: {message.text}")
+
+    # ====================== التعامل مع الغياب ======================
     if chat_id in last_message_time:
         if current_time - last_message_time[chat_id] > 1800:
             bot.reply_to(message, "رجعت أخيراً؟")
     last_message_time[chat_id] = current_time
 
+    # ====================== الذاكرة ======================
     conversation_memory[chat_id].append({"role": "user", "content": text})
     if len(conversation_memory[chat_id]) > 10:
         conversation_memory[chat_id] = conversation_memory[chat_id][-10:]
@@ -71,16 +115,17 @@ def chat(message):
             max_tokens=750
         )
         reply = response.choices[0].message.content
+
+        # ====================== تسجيل رد لوتس ======================
+        print(f"[لوتس] {reply}")
+
         bot.reply_to(message, reply)
         conversation_memory[chat_id].append({"role": "assistant", "content": reply})
-    except:
-        bot.reply_to(message, "عذراً، حدث خطأ.")
+    except Exception as e:
+        print(f"خطأ: {e}")
+        bot.reply_to(message, "عذراً، حدث خطأ مؤقت.")
 
 if __name__ == "__main__":
-    # تشغيل Flask في خيط منفصل
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.daemon = True
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-
-    # تشغيل البوت
     run_bot()
