@@ -2,27 +2,33 @@ import telebot
 import os
 import asyncio
 import edge_tts
-from openai import OpenAI
 from groq import Groq
 
-# --- الإعدادات ---
-# تأكد من إضافة المتغيرات BOT_TOKEN, DEEPSEEK_API_KEY, GROQ_KEY في Railway
+# الإعدادات
 bot = telebot.TeleBot(os.environ.get("BOT_TOKEN"))
-deepseek = OpenAI(api_key=os.environ.get("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com")
-groq_client = Groq(api_key=os.environ.get("GROQ_KEY"))
+client = Groq(api_key=os.environ.get("GROQ_KEY"))
 
-# --- هوية لوتس الثابتة ---
-LOTUS_APPEARANCE = "A cute anime girl with bob cut hair, soft colors (light pink and blue gradient), sparkling eyes, pixel art style, 8-bit aesthetic"
-ROOM_DESCRIPTION = "A cozy modern bedroom in a high-rise building with a large window overlooking the deep blue sea at sunset, pixel art style, 8-bit aesthetic"
+# هوية لوتس الثابتة (بيكسل آرت)
 LOTUS_IDENTITY = """
-أنتِ "لوتس"، مرحة، مشاكسة، وخفيفة الظل. تتحدثين بكلمات قليلة جداً ومختصرة.
-تعيشين في غرفتك المطلة على البحر وتتواصلين عبر حاسوبك المحمول. حركتك داخل الغرفة محدودة.
+أنتِ "لوتس"، مرحة، مشاكسة، خفيفة الظل، وتتحدثين بكلمات قليلة جداً ومختصرة.
+تعيشين في غرفتك المطلة على البحر. استخدمي الرموز التعبيرية (Emojis) في كلامك.
 """
 
-# --- دالة التفاعل (صورة + صوت) ---
-async def send_lotus_response(chat_id, text, emotion="happy"):
-    # توليد الصورة بالبيكسل آرت
-    image_prompt = f"{ROOM_DESCRIPTION}, {LOTUS_APPEARANCE}, Lotus looks {emotion}, high quality pixel art, 8-bit"
+# دالة ذكية لاختيار نموذج Groq (أقسام)
+def get_groq_response(user_text):
+    # نستخدم نماذج مختلفة حسب طول الرسالة
+    model = "llama-3.3-70b-versatile" if len(user_text) > 30 else "llama-3.3-8b-instant"
+    
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": LOTUS_IDENTITY}, {"role": "user", "content": user_text}]
+    )
+    return response.choices[0].message.content
+
+# دالة إرسال الصورة والصوت
+async def send_lotus_response(chat_id, text):
+    # توليد الصورة بأسلوب ثابت
+    image_prompt = "A cute anime girl with bob cut hair, pixel art style, 8-bit aesthetic, in a cozy room overlooking the sea, high quality"
     image_url = f"https://image.pollinations.ai/prompt/{image_prompt.replace(' ', '%20')}"
     
     # توليد الصوت
@@ -34,29 +40,18 @@ async def send_lotus_response(chat_id, text, emotion="happy"):
         bot.send_photo(chat_id, image_url, caption=text)
         bot.send_voice(chat_id, audio)
 
-# --- منطق الحوار ---
+# منطق المحادثة
 @bot.message_handler(func=lambda msg: True)
 def chat(message):
-    if message.text.startswith('/'): return
-    chat_id = message.chat.id
-    
     try:
-        response = deepseek.chat.completions.create(
-            model="deepseek-chat",
-            messages=[{"role": "system", "content": LOTUS_IDENTITY}, {"role": "user", "content": message.text}]
-        )
-        reply = response.choices[0].message.content
-    except Exception:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": LOTUS_IDENTITY}, {"role": "user", "content": message.text}]
-        )
-        reply = response.choices[0].message.content
-
-    asyncio.run(send_lotus_response(chat_id, reply))
+        reply = get_groq_response(message.text)
+        asyncio.run(send_lotus_response(message.chat.id, reply))
+    except Exception as e:
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
-    # حل جذري لمشكلة تعارض الاتصال
+    # تنظيف الاتصال لضمان عدم وجود تضارب (Conflict 409)
     bot.delete_webhook()
-    print("Lotus is now online and waiting for messages...")
+    print("Lotus is online!")
     bot.infinity_polling()
+    
