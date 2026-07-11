@@ -1,4 +1,5 @@
 pyTelegramBotAPI
 groq
-gTTS
-requests
+openai
+google-generativeai
+edge-tts
