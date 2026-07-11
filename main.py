@@ -7,7 +7,7 @@ import threading
 from flask import Flask
 from datetime import datetime
 
-BOT_TOKEN = "8987275709:AAEy2mlf-Unje_VsB_S8XdmWJSQ_iFfoFCI"
+BOT_TOKEN = "8987275709:AAERiLpXKEtMGBvzh7e51RQoPb3BtgsP7pg"
 GROQ_KEY = "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"
 
 client = Groq(api_key=GROQ_KEY)
