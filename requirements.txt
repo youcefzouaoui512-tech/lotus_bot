@@ -2,3 +2,4 @@ pyTelegramBotAPI
 groq
 requests
 python-dotenv
+beautifulsoup4
