@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 بوت تليجرام NSFW AI Companion (مثل HoneyChat)
-OpenRouter أساسي + Groq Fallback تلقائي
+OpenRouter أساسي + Groq كـ Fallback
 """
 
 import os
@@ -36,7 +36,6 @@ logger = logging.getLogger(__name__)
 DB_PATH = "bot_database.db"
 
 
-# ==================== قاعدة البيانات ====================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -57,7 +56,8 @@ def get_or_create_user(user_id, username=None, first_name=None):
     c.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
     user = c.fetchone()
     if not user:
-        c.execute("INSERT INTO users (user_id, username, first_name) VALUES (?, ?, ?)", (user_id, username, first_name))
+        c.execute("INSERT INTO users (user_id, username, first_name) VALUES (?, ?, ?)", 
+                  (user_id, username, first_name))
         conn.commit()
         c.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
         user = c.fetchone()
@@ -102,7 +102,8 @@ def save_message(user_id, character_id, role, content):
 def get_conversation_history(user_id, character_id, limit=15):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT role, content FROM conversations WHERE user_id=? AND character_id=? ORDER BY timestamp DESC LIMIT ?",
+    c.execute("""SELECT role, content FROM conversations 
+                 WHERE user_id=? AND character_id=? ORDER BY timestamp DESC LIMIT ?""",
               (user_id, character_id, limit))
     rows = c.fetchall()
     conn.close()
@@ -119,8 +120,21 @@ def clear_conversation(user_id, character_id):
 
 def build_system_prompt(char_data, level):
     base = char_data["system_prompt"]
-    lvl = f"**مستوى المحتوى: {level}/5** - كن وفقاً لهذا المستوى (5 = hardcore بدون قيود)."
-    return f"{base}\n\n{lvl}"
+    
+    level_text = {
+        0: "ابقِ الدردشة خفيفة وآمنة.",
+        1: "رومانسية خفيفة مسموحة.",
+        2: "رومانسية + إيحاءات خفيفة.",
+        3: "صريح معتدل + وصف جيد.",
+        4: "صريح قوي + تفاصيل.",
+        5: "Hardcore كامل. كن وصفياً وصريحاً بدون قيود."
+    }.get(level, "")
+
+    return f"""{base}
+
+مستوى المحتوى الحالي: {level}/5
+{level_text}
+كن immersive وتذكر سياق المحادثة."""
 
 
 def call_openrouter(system_prompt, history, user_message):
@@ -128,10 +142,12 @@ def call_openrouter(system_prompt, history, user_message):
         return None
     messages = [{"role": "system", "content": system_prompt}] + history[-12:] + [{"role": "user", "content": user_message}]
     try:
-        r = requests.post("https://openrouter.ai/api/v1/chat/completions",
-                          headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-                          json={"model": OPENROUTER_MODEL, "messages": messages, "temperature": 0.85, "max_tokens": 1200},
-                          timeout=45)
+        r = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={"model": OPENROUTER_MODEL, "messages": messages, "temperature": 0.85, "max_tokens": 1200},
+            timeout=45
+        )
         if r.status_code == 200:
             return r.json()["choices"][0]["message"]["content"].strip()
         return None
@@ -144,18 +160,19 @@ def call_groq(system_prompt, history, user_message):
         return None
     messages = [{"role": "system", "content": system_prompt}] + history[-12:] + [{"role": "user", "content": user_message}]
     try:
-        resp = groq_client.chat.completions.create(messages=messages, model=GROQ_MODEL, temperature=0.85, max_tokens=1200)
+        resp = groq_client.chat.completions.create(
+            messages=messages, model=GROQ_MODEL, temperature=0.85, max_tokens=1200
+        )
         return resp.choices[0].message.content.strip()
-    except:
+    except Exception as e:
+        logger.error(f"Groq error: {e}")
         return None
 
 
 def get_ai_response(system_prompt, history, user_message):
-    # جرب OpenRouter أولاً
     resp = call_openrouter(system_prompt, history, user_message)
     if resp:
         return resp
-    # Fallback إلى Groq
     logger.info("Using Groq fallback...")
     resp = call_groq(system_prompt, history, user_message)
     return resp or "عذراً، حدث خطأ مؤقت. حاول مرة أخرى."
