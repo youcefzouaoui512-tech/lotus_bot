@@ -1,6 +1,4 @@
 pyTelegramBotAPI
 groq
-edge-tts
-pydub
 requests
-nest-asyncio
+python-dotenv
