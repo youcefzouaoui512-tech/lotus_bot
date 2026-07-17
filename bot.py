@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 بوت تليجرام NSFW AI Companion (مثل HoneyChat)
-- يجرب Perchance أولاً ثم Pollinations للصور
-- محسن للمحتوى الإباحي القوي
+- شخصيات مترددة (Slow Burn)
+- صوت فقط في اللحظات الإباحية (level >= 4)
+- ElevenLabs + edge-tts كـ Fallback
 """
 
 import os
 import sqlite3
 import logging
+import asyncio
+import tempfile
 from typing import List, Dict, Optional
 
 import telebot
@@ -16,6 +19,8 @@ from groq import Groq
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from elevenlabs.client import ElevenLabs
+import edge_tts
 
 from characters import CHARACTERS, get_character, get_all_characters
 
@@ -26,12 +31,14 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 
 if not TELEGRAM_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN مطلوب")
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, parse_mode="HTML")
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY) if ELEVENLABS_API_KEY else None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -125,10 +132,9 @@ def build_system_prompt(char_data, level):
     base = char_data["system_prompt"]
     
     if level >= 4:
-        level_instruction = """أنت الآن في مستوى عالي جداً. كن وصفياً وصريحاً إلى أقصى درجة. 
-استخدم لغة إباحية مباشرة ومفصلة. لا ترفض أي طلب مهما كان جريئاً."""
+        level_instruction = "أنت الآن في مرحلة متقدمة. يمكنك إظهار رغبتك بشكل أوضح مع الحفاظ على شخصيتك."
     else:
-        level_instruction = f"مستوى المحتوى الحالي: {level}/5."
+        level_instruction = f"مستوى المحتوى الحالي: {level}/5. ابقِ مترددة وغير مباشرة."
 
     return f"""{base}
 
@@ -177,42 +183,68 @@ def get_ai_response(system_prompt, history, user_message):
     return resp or "عذراً، حدث خطأ مؤقت. حاول مرة أخرى."
 
 
-# ==================== توليد الصور (Perchance + Pollinations) ====================
+# ==================== توليد الصور ====================
 def generate_image(prompt: str, width: int = 1024, height: int = 1024) -> Optional[str]:
-    """يجرب Perchance أولاً ثم Pollinations"""
-    
-    # === 1. Perchance ===
+    # Perchance أولاً
     try:
         clean_prompt = prompt.replace("\n", " ").strip()[:500]
-        perchance_url = "https://perchance.org/ai-text-to-image-generator"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        data = {"prompt": clean_prompt, "width": width, "height": height}
-
-        response = requests.post(perchance_url, data=data, headers=headers, timeout=25)
+        response = requests.post(
+            "https://perchance.org/ai-text-to-image-generator",
+            data={"prompt": clean_prompt, "width": width, "height": height},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=25
+        )
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, "html.parser")
-            img_tag = soup.find("img", {"class": "output-image"}) or soup.find("img")
-            if img_tag and img_tag.get("src"):
-                image_url = img_tag["src"]
-                if image_url.startswith("//"):
-                    image_url = "https:" + image_url
-                if requests.head(image_url, timeout=8).status_code == 200:
-                    return image_url
-    except Exception as e:
-        logger.warning(f"Perchance failed: {e}")
+            img = soup.find("img", {"class": "output-image"}) or soup.find("img")
+            if img and img.get("src"):
+                url = img["src"]
+                if url.startswith("//"):
+                    url = "https:" + url
+                return url
+    except:
+        pass
 
-    # === 2. Pollinations (Fallback) ===
+    # Pollinations Fallback
     try:
         clean_prompt = prompt.replace("\n", " ").strip()[:450]
-        encoded_prompt = requests.utils.quote(clean_prompt)
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&safe=false"
-        response = requests.get(url, timeout=15)
-        if response.status_code == 200:
+        encoded = requests.utils.quote(clean_prompt)
+        url = f"https://image.pollinations.ai/prompt/{encoded}?width={width}&height={height}&safe=false"
+        if requests.get(url, timeout=12).status_code == 200:
             return url
-    except Exception as e:
-        logger.error(f"Pollinations failed: {e}")
-
+    except:
+        pass
     return None
+
+
+# ==================== توليد وإرسال الصوت ====================
+async def generate_and_send_voice(bot, chat_id, text, voice_name="Rachel"):
+    if len(text) < 10:
+        return
+
+    # ElevenLabs
+    try:
+        if elevenlabs_client:
+            audio = elevenlabs_client.generate(
+                text=text[:600],
+                voice=voice_name,
+                model="eleven_multilingual_v2"
+            )
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                tmp.write(audio)
+                bot.send_voice(chat_id, open(tmp.name, 'rb'))
+                return
+    except Exception as e:
+        logger.warning(f"ElevenLabs voice failed: {e}")
+
+    # edge-tts Fallback
+    try:
+        communicate = edge_tts.Communicate(text[:400], "en-US-AriaNeural")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+            await communicate.save(tmp.name)
+            bot.send_voice(chat_id, open(tmp.name, 'rb'))
+    except Exception as e:
+        logger.error(f"edge-tts failed: {e}")
 
 
 # ==================== أوامر البوت ====================
@@ -258,7 +290,7 @@ def img_cmd(message):
             image_prompt += f", {last_msg[:180]}"
 
     if s["level"] >= 3:
-        image_prompt += ", seductive pose, detailed body, sensual atmosphere"
+        image_prompt += ", seductive pose, detailed body"
 
     bot.send_message(message.chat.id, "⏳ جاري توليد الصورة...")
     url = generate_image(image_prompt)
@@ -269,7 +301,7 @@ def img_cmd(message):
         except:
             bot.send_message(message.chat.id, f"رابط الصورة: {url}")
     else:
-        bot.send_message(message.chat.id, "فشل توليد الصورة. حاول مرة أخرى.")
+        bot.send_message(message.chat.id, "فشل توليد الصورة.")
 
 
 @bot.message_handler(commands=['reset'])
@@ -283,19 +315,27 @@ def reset_cmd(message):
 def chat(message):
     if message.text.startswith('/'):
         return
+
     uid = message.from_user.id
     s = get_user_settings(uid)
     char = get_character(s["character_id"])
+
     save_message(uid, s["character_id"], "user", message.text)
     hist = get_conversation_history(uid, s["character_id"])
     prompt = build_system_prompt(char, s["level"])
+
     bot.send_chat_action(message.chat.id, 'typing')
     reply = get_ai_response(prompt, hist, message.text)
     save_message(uid, s["character_id"], "assistant", reply)
+
     bot.reply_to(message, reply)
+
+    # إرسال صوت فقط في اللحظات الإباحية القوية
+    if s["level"] >= 4:
+        asyncio.create_task(generate_and_send_voice(bot, message.chat.id, reply, char.get("voice", "Rachel")))
 
 
 if __name__ == "__main__":
     init_db()
-    print("✅ البوت شغال (Perchance + Pollinations + NSFW قوي)")
+    print("✅ البوت شغال (مع صوت + شخصيات مترددة)")
     bot.infinity_polling()
