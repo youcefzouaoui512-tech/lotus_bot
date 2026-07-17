@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-بوت تليجرام NSFW AI Companion (مثل HoneyChat)
-- شخصيات مترددة (Slow Burn)
-- صوت فقط في اللحظات الإباحية (level >= 4)
-- ElevenLabs + edge-tts كـ Fallback
+بوت تليجرام NSFW AI Companion
+- Tensor.Art + Pollinations (محسن للـ NSFW)
+- ElevenLabs + edge-tts للصوت (فقط في اللحظات الإباحية)
 """
 
 import os
@@ -17,12 +16,11 @@ import telebot
 from telebot import types
 from groq import Groq
 import requests
-from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from elevenlabs.client import ElevenLabs
 import edge_tts
 
-from characters import CHARACTERS, get_character, get_all_characters
+from characters import get_character, get_all_characters
 
 load_dotenv()
 
@@ -32,6 +30,7 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+TENSOR_API_KEY = os.getenv("TENSOR_API_KEY")
 
 if not TELEGRAM_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN مطلوب")
@@ -183,37 +182,57 @@ def get_ai_response(system_prompt, history, user_message):
     return resp or "عذراً، حدث خطأ مؤقت. حاول مرة أخرى."
 
 
-# ==================== توليد الصور ====================
-def generate_image(prompt: str, width: int = 1024, height: int = 1024) -> Optional[str]:
-    # Perchance أولاً
-    try:
-        clean_prompt = prompt.replace("\n", " ").strip()[:500]
-        response = requests.post(
-            "https://perchance.org/ai-text-to-image-generator",
-            data={"prompt": clean_prompt, "width": width, "height": height},
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=25
-        )
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            img = soup.find("img", {"class": "output-image"}) or soup.find("img")
-            if img and img.get("src"):
-                url = img["src"]
-                if url.startswith("//"):
-                    url = "https:" + url
-                return url
-    except:
-        pass
+# ==================== توليد الصور (Tensor.Art + Pollinations محسن للـ NSFW) ====================
+def generate_image(prompt: str, width: int = 1024, height: int = 1024, level: int = 3) -> Optional[str]:
+    """يجرب Tensor.Art أولاً ثم Pollinations مع تحسينات قوية للـ NSFW"""
 
-    # Pollinations Fallback
+    # === 1. Tensor.Art ===
+    if TENSOR_API_KEY:
+        try:
+            url = "https://api.tensor.art/v1/generate"
+            headers = {
+                "Authorization": f"Bearer {TENSOR_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "prompt": prompt,
+                "width": width,
+                "height": height,
+                "num_inference_steps": 28,
+                "guidance_scale": 7.5,
+                "seed": -1
+            }
+            response = requests.post(url, json=payload, headers=headers, timeout=60)
+            if response.status_code == 200:
+                data = response.json()
+                if "images" in data and len(data["images"]) > 0:
+                    return data["images"][0]["url"]
+        except Exception as e:
+            logger.warning(f"Tensor.Art failed: {e}")
+
+    # === 2. Pollinations (محسن للـ NSFW) ===
     try:
-        clean_prompt = prompt.replace("\n", " ").strip()[:450]
-        encoded = requests.utils.quote(clean_prompt)
-        url = f"https://image.pollinations.ai/prompt/{encoded}?width={width}&height={height}&safe=false"
-        if requests.get(url, timeout=12).status_code == 200:
+        enhanced_prompt = prompt
+
+        if level >= 3:
+            nsfw_additions = ", highly detailed body, sensual lighting, erotic atmosphere, detailed skin texture"
+            if level >= 4:
+                nsfw_additions += ", explicit nudity, detailed breasts, detailed pussy, wet skin, aroused expression"
+            if level == 5:
+                nsfw_additions += ", hardcore, explicit sex, cum, ahegao, spreading legs, detailed genitals"
+
+            enhanced_prompt = prompt + nsfw_additions
+
+        clean_prompt = enhanced_prompt.replace("\n", " ").strip()[:500]
+        encoded_prompt = requests.utils.quote(clean_prompt)
+
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&safe=false&seed=42"
+
+        if requests.get(url, timeout=18).status_code == 200:
             return url
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Pollinations NSFW failed: {e}")
+
     return None
 
 
@@ -235,7 +254,7 @@ async def generate_and_send_voice(bot, chat_id, text, voice_name="Rachel"):
                 bot.send_voice(chat_id, open(tmp.name, 'rb'))
                 return
     except Exception as e:
-        logger.warning(f"ElevenLabs voice failed: {e}")
+        logger.warning(f"ElevenLabs failed: {e}")
 
     # edge-tts Fallback
     try:
@@ -293,7 +312,7 @@ def img_cmd(message):
         image_prompt += ", seductive pose, detailed body"
 
     bot.send_message(message.chat.id, "⏳ جاري توليد الصورة...")
-    url = generate_image(image_prompt)
+    url = generate_image(image_prompt, level=s["level"])
 
     if url:
         try:
@@ -337,5 +356,5 @@ def chat(message):
 
 if __name__ == "__main__":
     init_db()
-    print("✅ البوت شغال (مع صوت + شخصيات مترددة)")
+    print("✅ البوت شغال (Tensor.Art + Pollinations NSFW + Voice)")
     bot.infinity_polling()
