@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 بوت تليجرام NSFW AI Companion
+- ساكورا كما تريدها بالضبط
 - Tensor.Art + Pollinations (محسن للـ NSFW)
-- ElevenLabs + edge-tts للصوت (فقط في اللحظات الإباحية)
+- صوت فقط في اللحظات الإباحية (level >= 4)
 """
 
 import os
@@ -131,9 +132,9 @@ def build_system_prompt(char_data, level):
     base = char_data["system_prompt"]
     
     if level >= 4:
-        level_instruction = "أنت الآن في مرحلة متقدمة. يمكنك إظهار رغبتك بشكل أوضح مع الحفاظ على شخصيتك."
+        level_instruction = "أنت الآن في مرحلة متقدمة. يمكنك إظهار رغبتك بشكل أوضح."
     else:
-        level_instruction = f"مستوى المحتوى الحالي: {level}/5. ابقِ مترددة وغير مباشرة."
+        level_instruction = f"مستوى المحتوى الحالي: {level}/5."
 
     return f"""{base}
 
@@ -182,11 +183,11 @@ def get_ai_response(system_prompt, history, user_message):
     return resp or "عذراً، حدث خطأ مؤقت. حاول مرة أخرى."
 
 
-# ==================== توليد الصور (Tensor.Art + Pollinations محسن للـ NSFW) ====================
+# ==================== توليد الصور (محسن) ====================
 def generate_image(prompt: str, width: int = 1024, height: int = 1024, level: int = 3) -> Optional[str]:
-    """يجرب Tensor.Art أولاً ثم Pollinations مع تحسينات قوية للـ NSFW"""
+    """Tensor.Art أولاً + Pollinations محسن للـ NSFW"""
 
-    # === 1. Tensor.Art ===
+    # Tensor.Art
     if TENSOR_API_KEY:
         try:
             url = "https://api.tensor.art/v1/generate"
@@ -210,28 +211,26 @@ def generate_image(prompt: str, width: int = 1024, height: int = 1024, level: in
         except Exception as e:
             logger.warning(f"Tensor.Art failed: {e}")
 
-    # === 2. Pollinations (محسن للـ NSFW) ===
+    # Pollinations (محسن للـ NSFW)
     try:
         enhanced_prompt = prompt
-
         if level >= 3:
-            nsfw_additions = ", highly detailed body, sensual lighting, erotic atmosphere, detailed skin texture"
+            nsfw_additions = ", highly detailed body, sensual lighting, erotic atmosphere"
             if level >= 4:
-                nsfw_additions += ", explicit nudity, detailed breasts, detailed pussy, wet skin, aroused expression"
+                nsfw_additions += ", explicit nudity, detailed breasts, aroused expression"
             if level == 5:
-                nsfw_additions += ", hardcore, explicit sex, cum, ahegao, spreading legs, detailed genitals"
+                nsfw_additions += ", hardcore, explicit sex, detailed genitals, ahegao"
 
             enhanced_prompt = prompt + nsfw_additions
 
         clean_prompt = enhanced_prompt.replace("\n", " ").strip()[:500]
         encoded_prompt = requests.utils.quote(clean_prompt)
-
-        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&safe=false&seed=42"
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&safe=false"
 
         if requests.get(url, timeout=18).status_code == 200:
             return url
     except Exception as e:
-        logger.error(f"Pollinations NSFW failed: {e}")
+        logger.error(f"Pollinations failed: {e}")
 
     return None
 
@@ -298,18 +297,25 @@ def img_cmd(message):
     char = get_character(s["character_id"])
     history = get_conversation_history(message.from_user.id, s["character_id"], 5)
 
-    style = char.get("style", "realistic")
-    style_prompt = "anime style, detailed anime illustration" if style == "anime" else "photorealistic, highly detailed"
+    # بناء الـ Prompt بقوة
+    if char.get("style") == "anime":
+        style_section = "masterpiece, best quality, anime style, detailed anime illustration, large expressive eyes, Japanese anime aesthetic"
+    else:
+        style_section = "photorealistic, highly detailed, realistic skin texture, cinematic lighting"
 
-    image_prompt = f"{char['name']}, {char['description']}, {style_prompt}, masterpiece"
+    image_prompt = f"{char['description']}, {style_section}"
+
+    if s["level"] >= 3:
+        image_prompt += ", seductive pose, sensual atmosphere"
+    if s["level"] >= 4:
+        image_prompt += ", explicit nudity, detailed breasts"
+    if s["level"] == 5:
+        image_prompt += ", hardcore, explicit sex, detailed genitals"
 
     if history:
         last_msg = next((m['content'] for m in reversed(history) if m['role'] == 'user'), "")
         if last_msg:
-            image_prompt += f", {last_msg[:180]}"
-
-    if s["level"] >= 3:
-        image_prompt += ", seductive pose, detailed body"
+            image_prompt += f", scene: {last_msg[:180]}"
 
     bot.send_message(message.chat.id, "⏳ جاري توليد الصورة...")
     url = generate_image(image_prompt, level=s["level"])
@@ -356,5 +362,5 @@ def chat(message):
 
 if __name__ == "__main__":
     init_db()
-    print("✅ البوت شغال (Tensor.Art + Pollinations NSFW + Voice)")
+    print("✅ البوت شغال (ساكورا كما تريدها + Tensor.Art + صوت)")
     bot.infinity_polling()
