@@ -3,3 +3,5 @@ groq
 requests
 python-dotenv
 beautifulsoup4
+elevenlabs
+edge-tts
